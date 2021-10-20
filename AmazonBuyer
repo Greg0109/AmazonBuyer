@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+import requests
+import os
+from subprocess import PIPE, run
+from bs4 import BeautifulSoup
+import time
+
+monitorUrl = {
+        "urlhere":priceInFloatHere
+    }
+newURLPrices = {}
+numberOfTries = 0
+
+def out(command):
+    result = run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
+    return result.stdout
+
+def scrape(url):
+    r = requests.get(url)
+    if r.status_code > 500:
+        if "To discuss automated access to Amazon data please contact" in r.text:
+            print("Page %s was blocked by Amazon. Please try using better proxies\n"%url)
+        else:
+            print("Page %s must have been blocked by Amazon as the status code was %d"%(url,r.status_code))
+        return "Error"
+    return r.text
+
+def printInfo(title, price, initialPrice, better):
+    print("Title: " + title)
+    print("Price: " + str(price))
+    print("Initial Price: " + str(initialPrice))
+    if better == True:
+        print("Better value\n-----------")
+    elif better == False:
+        print("Worse value\n-----------")
+    elif better == "Same":
+        print("Same value\n-----------")
+
+def notify(notification):
+    os.system('g notifier "%s"' % notification)
+
+def checkPrice(price,url,title):
+    notification = ('%s\n%s€\n\n%s\n' % (title,price,url))
+    notification = notification.replace('"','')
+    if float(monitorUrl[url]) > float(price):
+        if url in newURLPrices:
+            if float(newURLPrices[url]) > float(price):
+                printInfo(title, price, monitorUrl[url], True)
+                os.system('g notifier "%s"' % notification)
+                newURLPrices[url] = float(price)
+            elif float(newURLPrices[url]) < float(price):
+                printInfo(title, price, monitorUrl[url], False)
+            else:
+                printInfo(title, price, monitorUrl[url], "Same")
+        else:
+            printInfo(title, price, monitorUrl[url], True)
+            notify(notification)
+            newURLPrices[url] = float(price)
+    elif float(monitorUrl[url]) < float(price):
+        printInfo(title, price, monitorUrl[url], False)
+    else:
+        printInfo(title, price, monitorUrl[url], "Same")
+
+def checkURL(url):
+    global numberOfTries
+    scraper = scrape(url)
+    if scraper != "Error":
+        soup = BeautifulSoup(scraper, features='lxml')
+    else:
+        return None
+    if soup:
+        try:
+            title = soup.find(id='productTitle').get_text().strip()
+        except:
+            print('No title? Weird')
+            title = 'No title'
+        try:
+            price = float(soup.find(id='priceblock_ourprice').get_text().replace('.', '').replace('€', '').replace(',', '.').strip())
+        except:
+            try:
+                price = float(soup.find(id='price_inside_buybox').get_text().replace('.', '').replace('€', '').replace(',', '.').strip())
+            except:
+                price = ''
+        if price:
+            checkPrice(price,url,title)
+            numberOfTries = 0
+        else:
+            print('No price located')
+            if numberOfTries < 3:
+                numberOfTries += 1
+                time.sleep(5)
+                checkURL(url)
+            elif numberOfTries > 3:
+                print('Tried to load the page 3 times, now I\'m out!')
+                os.system('g notifier "Amazon scraper failed, page %s was blocked or page was not existing"' % url)
+                quit()
+    else:
+        print('No data')
+
+def clearTerminal():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+while True:
+    for url in monitorUrl:
+        checkURL(url)
+    time.sleep(3600)
+    clearTerminal()
